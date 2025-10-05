@@ -1,1 +1,102 @@
+local TweenService = game:GetService("TweenService")
+local player = game.Players.LocalPlayer
+local pg = player:WaitForChild("PlayerGui")
+local bottom = pg:WaitForChild("Main"):WaitForChild("Bottom")
+local moneyFolder = bottom:WaitForChild("Money")
 
+local mainLabel = moneyFolder:WaitForChild("Text", 5) or moneyFolder
+local whiteLabel = moneyFolder:WaitForChild("White", 5)
+local changeTemplate = bottom:WaitForChild("Changes"):WaitForChild("MoneyChange")
+
+if not mainLabel or not whiteLabel or not changeTemplate then
+    warn("[FakeMoney] Missing GUI elements.")
+    return
+end
+
+-- number formatting
+local function formatNumber(n)
+    local s = tostring(math.floor(n))
+    return s:reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+end
+
+-- extract numeric value from "$12,345"
+local function extractNumber(text)
+    return tonumber((text:gsub("[^%d]", "")))
+end
+
+local startValue = extractNumber(mainLabel.Text) or 0
+local fakeMoney = startValue
+local incomePerSecond = 0
+
+local lastDeductTime = 0
+local lastDeductAmount = 0
+
+-- green floating +money animation
+local function showMoneyGain(amount)
+    local clone = changeTemplate:Clone()
+    clone.Text = "+$" .. formatNumber(amount)
+    clone.TextColor3 = Color3.fromRGB(0, 255, 0)
+    clone.Visible = true
+    clone.TextTransparency = 0
+    clone.Parent = changeTemplate.Parent
+
+    -- pop-in grow effect
+    local originalSize = clone.TextSize
+    clone.TextSize = originalSize * 1.5
+    TweenService:Create(clone, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {TextSize = originalSize}):Play()
+
+    -- fade out after 3 seconds
+    local tween = TweenService:Create(clone, TweenInfo.new(3, Enum.EasingStyle.Linear), {TextTransparency = 1})
+    tween:Play()
+    tween.Completed:Connect(function()
+        clone:Destroy()
+    end)
+end
+
+-- update both labels
+local function updateDisplay()
+    local display = "$" .. formatNumber(math.max(fakeMoney, 0))
+    mainLabel.Text = display
+    whiteLabel.Text = display
+end
+
+-- adds your “incomePerSecond” every second
+task.spawn(function()
+    while true do
+        task.wait(1)
+        if incomePerSecond > 0 then
+            fakeMoney += incomePerSecond
+            updateDisplay()
+            showMoneyGain(incomePerSecond)
+        end
+    end
+end)
+
+-- detects real purchases
+bottom.Changes.ChildAdded:Connect(function(child)
+    if child:IsA("TextLabel") and child.Text:match("^%-%$") then
+        local amount = extractNumber(child.Text)
+        if amount and amount > 0 then
+            local now = tick()
+            -- prevent multiple triggers from flicker
+            if now - lastDeductTime > 0.5 or amount ~= lastDeductAmount then
+                lastDeductTime = now
+                lastDeductAmount = amount
+
+                fakeMoney -= amount
+                updateDisplay()
+
+                incomePerSecond += amount
+                print("[FakeMoney] Purchase detected: -$" .. amount .. " | +" .. incomePerSecond .. "/sec total")
+            end
+        end
+    end
+end)
+
+-- keeps overriding real money text if the game changes it
+mainLabel:GetPropertyChangedSignal("Text"):Connect(function()
+    local correct = "$" .. formatNumber(math.max(fakeMoney, 0))
+    if mainLabel.Text ~= correct then
+        updateDisplay()
+    end
+end)
